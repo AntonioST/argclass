@@ -1,5 +1,15 @@
-from collections.abc import Callable
-from typing import TypeVar, get_origin, Any, Literal, get_args, Union
+import sys
+
+from typing import TypeVar, get_origin, Any, Literal, get_args
+from typing import Union
+
+if sys.version_info < (3, 9):
+    from typing import Tuple, Dict, Callable
+else:
+    from collections.abc import Callable
+
+    Tuple = tuple
+    Dict = dict
 
 __all__ = [
     'literal_value_type',
@@ -30,7 +40,7 @@ def literal_value_type(arg: str):
     return arg
 
 
-def literal_str_type(constant: tuple[str, ...]) -> Callable[[str], str]:
+def literal_str_type(constant: Tuple[str, ...]) -> Callable[[str], str]:
     def _type(arg: str):
         if arg in constant:
             return arg
@@ -108,7 +118,7 @@ def tuple_type(value_type: Union[Callable[[str], T], tuple] = str, n: int = None
     elif n is None:
         n = 0  # no-limited
 
-    def _cast(arg: str) -> tuple[T, ...]:
+    def _cast(arg: str) -> Tuple[T, ...]:
         if isinstance(value_type, tuple):
             return tuple(map(lambda it: it[0](it[1]), zip(value_type, arg.split(split, maxsplit=(n - 1)))))
         else:
@@ -117,7 +127,7 @@ def tuple_type(value_type: Union[Callable[[str], T], tuple] = str, n: int = None
     return _cast
 
 
-def list_type(value_type: Callable[[str], T] = str, split=',', prepend: tuple[T, ...] = None):
+def list_type(value_type: Callable[[str], T] = str, split=',', prepend: Tuple[T, ...] = None):
     """:attr:`arg.type` caster which convert comma ',' spread string into list.
 
     :param split: split character
@@ -126,7 +136,7 @@ def list_type(value_type: Callable[[str], T] = str, split=',', prepend: tuple[T,
     :return: type caster.
     """
 
-    def _cast(arg: str) -> tuple[T, ...]:
+    def _cast(arg: str) -> Tuple[T, ...]:
         value = list(map(value_type, arg.split(split)))
 
         if arg.startswith('+') and prepend is not None:
@@ -137,7 +147,7 @@ def list_type(value_type: Callable[[str], T] = str, split=',', prepend: tuple[T,
     return _cast
 
 
-def dict_type(default: dict[str, T] = None,
+def dict_type(default: Dict[str, T] = None,
               value_type: Callable[[str], T] = str,
               entry_sep: str = ',',
               kv_sep: str = '='):
@@ -152,7 +162,7 @@ def dict_type(default: dict[str, T] = None,
     if default is None:
         default = {}
 
-    def _type(arg: str) -> dict[str, T]:
+    def _type(arg: str) -> Dict[str, T]:
         ret = dict(default)
 
         for value in arg.split(entry_sep):

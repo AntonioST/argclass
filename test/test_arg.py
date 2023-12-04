@@ -1,7 +1,8 @@
 import unittest
+from typing import List
 
-from argclass import arg
-from argclass.core import foreach_arguments, with_defaults
+from argclass import arg, list_type
+from argclass.core import foreach_arguments, with_defaults, AbstractOptions
 
 
 class TestField(unittest.TestCase):
@@ -104,6 +105,101 @@ class TestField(unittest.TestCase):
 
         self.assertIsNone(c.b)
         self.assertEquals(c.c, 'c')
+
+
+class TestArgType(unittest.TestCase):
+    def test_bool_defaults(self):
+        class C:
+            a: bool = arg('-a')
+            b: bool = arg('-b', action='store_true')
+            c: bool = arg('-c', action='store_false')
+
+        c = with_defaults(C())
+        self.assertFalse(c.a)
+        self.assertFalse(c.b)
+        self.assertTrue(c.c)
+
+    def test_int_defaults(self):
+        class C:
+            a: int = arg('-a')
+            b: int = arg('-b', default=0)
+
+        c = with_defaults(C())
+        with self.assertRaises(AttributeError):
+            c.a
+        self.assertEquals(0, c.b)
+
+    def test_bool_parser_defaults(self):
+        class C(AbstractOptions):
+            a: bool = arg('-a')
+            b: bool = arg('-b', action='store_true')
+            c: bool = arg('-c', action='store_false')
+
+            def run(self):
+                pass
+
+        c = C()
+        self.assertFalse(c.a)
+        self.assertFalse(c.b)
+        self.assertTrue(c.c)
+
+    def test_int_parser_defaults(self):
+        class C(AbstractOptions):
+            a: int = arg('-a')
+            b: int = arg('-b', default=0)
+
+            def run(self):
+                pass
+
+        c = C()
+        with self.assertRaises(AttributeError):
+            c.a
+        self.assertEquals(0, c.b)
+
+    def test_parse_bool(self):
+        class C(AbstractOptions):
+            a: bool = arg('-a')
+
+            def run(self):
+                pass
+
+        c = C()
+        c.main([], parse_only=True)
+        self.assertFalse(c.a)
+        c.main(['-a'], parse_only=True)
+        self.assertTrue(c.a)
+
+    def test_parse_int(self):
+        class C(AbstractOptions):
+            a: int = arg('-a')
+
+            def run(self):
+                pass
+
+        c = C()
+        c.main([], parse_only=True)
+        self.assertIsNone(c.a)
+
+        c.main(['-a', '1'], parse_only=True)
+        self.assertEquals(1, c.a)
+
+    def test_parse_list(self):
+        class C(AbstractOptions):
+            a: List[int] = arg('-a', type=list_type(int))
+
+            def run(self):
+                pass
+
+        c = C()
+        c.main([], parse_only=True)
+        self.assertIsNone(c.a)
+
+        c.main(['-a', '1'], parse_only=True)
+        self.assertListEqual([1], c.a)
+
+        c.main(['-a', '1,2,3'], parse_only=True)
+        self.assertListEqual([1, 2, 3], c.a)
+
 
 if __name__ == '__main__':
     unittest.main()

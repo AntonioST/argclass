@@ -1,5 +1,12 @@
 import argparse
+import sys
 from typing import Any
+from typing import Optional
+
+if sys.version_info < (3, 9):
+    from typing import Dict
+else:
+    Dict = dict
 
 from .core import Arg
 
@@ -8,7 +15,7 @@ __all__ = ['AliasArg', 'MappingArg']
 
 class AliasArg(Arg):
     def __init__(self, *options,
-                 aliases: dict[str, Any],
+                 aliases: Dict[str, Any],
                  **kwargs):
         super().__init__(*options, **kwargs)
         self.aliases = aliases
@@ -68,7 +75,7 @@ class MappingArgAction(argparse.Action):
                  parser: argparse.ArgumentParser,
                  namespace: argparse.Namespace,
                  values: str,
-                 option_string: str | None = None) -> None:
+                 option_string: Optional[str] = None) -> None:
         coll = getattr(namespace, self.dest, {})
         if coll is None:
             coll = {}
