@@ -1,12 +1,5 @@
 import argparse
-import sys
 from typing import Any
-from typing import Optional
-
-if sys.version_info < (3, 9):
-    from typing import Dict
-else:
-    Dict = dict
 
 from .core import Arg
 
@@ -15,32 +8,32 @@ __all__ = ['AliasArg', 'MappingArg']
 
 class AliasArg(Arg):
     def __init__(self, *options,
-                 aliases: Dict[str, Any],
+                 aliases: dict[str, Any],
                  **kwargs):
         super().__init__(*options, **kwargs)
         self.aliases = aliases
 
-    def add_argument(self, ap: argparse._ActionsContainer, opt):
-        kwargs = self.complete_options(opt)
+    def add_argument(self, ap: argparse._ActionsContainer, owner):
+        kwargs = self.complete_options(owner)
 
         try:
             ap.add_argument(*self.options, **kwargs, dest=self.attr)
         except TypeError as e:
-            if isinstance(opt, type):
-                name = opt.__name__
+            if isinstance(owner, type):
+                name = owner.__name__
             else:
-                name = type(opt).__name__
+                name = type(owner).__name__
 
             raise RuntimeError(f'{name}.{self.attr} : ' + repr(e)) from e
 
-        opt = self.options[0]
+        owner = self.options[0]
         for name, values in self.aliases.items():
             kw = dict(kwargs)
             kw.pop('metavar', None)
             kw.pop('type', None)
             kw['action'] = 'store_const'
             kw['const'] = values
-            kw['help'] = f'short for {opt}={values}.'
+            kw['help'] = f'short for {owner}={values}.'
             ap.add_argument(name, **kw, dest=self.attr)
 
 
@@ -75,7 +68,7 @@ class MappingArgAction(argparse.Action):
                  parser: argparse.ArgumentParser,
                  namespace: argparse.Namespace,
                  values: str,
-                 option_string: Optional[str] = None) -> None:
+                 option_string: str | None = None) -> None:
         coll = getattr(namespace, self.dest, {})
         if coll is None:
             coll = {}

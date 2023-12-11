@@ -1,15 +1,5 @@
-import sys
-
-from typing import TypeVar, get_origin, Any, Literal, get_args
-from typing import Union
-
-if sys.version_info < (3, 9):
-    from typing import Tuple, Dict, Callable
-else:
-    from collections.abc import Callable
-
-    Tuple = tuple
-    Dict = dict
+from collections.abc import Callable
+from typing import TypeVar, get_origin, Any, Literal, get_args, Union, overload
 
 __all__ = [
     'literal_value_type',
@@ -40,7 +30,7 @@ def literal_value_type(arg: str):
     return arg
 
 
-def literal_str_type(constant: Tuple[str, ...]) -> Callable[[str], str]:
+def literal_str_type(constant: tuple[str, ...]) -> Callable[[str], str]:
     def _type(arg: str):
         if arg in constant:
             return arg
@@ -108,7 +98,17 @@ def ann_type(a_name: str, a_type):
         raise RuntimeError(f'{a_name} {a_type}')
 
 
-def tuple_type(value_type: Union[Callable[[str], T], tuple] = str, n: int = None, split=','):
+@overload
+def tuple_type(value_type: Callable[[str], T] = str, n: int = None, *, split=','):
+    pass
+
+
+@overload
+def tuple_type(value_type: tuple = str, *, split=','):
+    pass
+
+
+def tuple_type(value_type=str, n: int = None, *, split=','):
     if n is None:
         if isinstance(value_type, tuple):
             n = len(value_type)
@@ -118,16 +118,16 @@ def tuple_type(value_type: Union[Callable[[str], T], tuple] = str, n: int = None
     elif n is None:
         n = 0  # no-limited
 
-    def _cast(arg: str) -> Tuple[T, ...]:
-        if isinstance(value_type, tuple):
-            return tuple(map(lambda it: it[0](it[1]), zip(value_type, arg.split(split, maxsplit=(n - 1)))))
-        else:
+    def _cast(arg: str) -> tuple[T, ...]:
+        if callable(value_type):
             return tuple(map(value_type, arg.split(split, maxsplit=(n - 1))))
+        else:
+            return tuple(map(lambda it: it[0](it[1]), zip(value_type, arg.split(split, maxsplit=(n - 1)))))
 
     return _cast
 
 
-def list_type(value_type: Callable[[str], T] = str, split=',', prepend: Tuple[T, ...] = None):
+def list_type(value_type: Callable[[str], T] = str, *, split=',', prepend: list[T] = None):
     """:attr:`arg.type` caster which convert comma ',' spread string into list.
 
     :param split: split character
@@ -136,49 +136,85 @@ def list_type(value_type: Callable[[str], T] = str, split=',', prepend: Tuple[T,
     :return: type caster.
     """
 
-    def _cast(arg: str) -> Tuple[T, ...]:
+    def _cast(arg: str) -> list[T]:
         value = list(map(value_type, arg.split(split)))
 
         if arg.startswith('+') and prepend is not None:
-            return tuple(*prepend, *value)
+            return [*prepend, *value]
         else:
-            return tuple(value)
+            return list(value)
 
     return _cast
 
 
-def dict_type(default: Dict[str, T] = None,
-              value_type: Callable[[str], T] = str,
+def dict_type(value_type: Callable[[str], T] | dict[str, type | Callable[[str], T]] = str, *,
               entry_sep: str = ',',
-              kv_sep: str = '='):
+              kv_sep: str = '=',
+              quote: str = '"',
+              prepend: dict[str, T] = None):
     """Dict arg value.
 
-    :param default: default dict content
     :param value_type: type of dict value
     :param entry_sep: single character as entry seperator
     :param kv_sep: single character candidates as key-value seperator
+    :param prepend: default dict content
     :return: type converter
     """
-    if default is None:
-        default = {}
+    if prepend is None:
+        prepend = {}
 
-    def _type(arg: str) -> Dict[str, T]:
-        ret = dict(default)
+    def _type(arg: str) -> dict[str, T]:
+        ret = dict(prepend)
 
-        for value in arg.split(entry_sep):
-            for sep in kv_sep:
-                if sep in value:
-                    k, _, v = value.partition(sep)
-                    if value_type is not None:
-                        v = value_type(v)
-                    ret[k] = v
-                    break
+        while len(arg):
+            k, v, arg = _dict_value(arg, entry_sep, kv_sep, quote)
+            if callable(value_type):
+                v = value_type(v)
             else:
-                if value_type is not None:
-                    default[value] = value_type("")
-                else:
-                    default[value] = None
+                try:
+                    vf = value_type[k]
+                except KeyError:
+                    try:
+                        vf = value_type[...]
+                    except KeyError:
+                        vf = str
+
+                v = vf(v)
+            ret[k] = v
 
         return ret
 
     return _type
+
+
+def _dict_value(expr: str,
+                entry_sep: str = ',',
+                kv_sep: str = '=',
+                quote: str = '"') -> tuple[str, str, str]:
+    x = len(expr)
+    e = e if (e := expr.find(entry_sep)) >= 0 else x
+    k = k if (k := expr.find(kv_sep)) >= 0 else x
+    if k == e == x:
+        if x == 0:
+            return "", "", ""
+        else:
+            return expr, "", ""
+    elif k < e:  # KEY=...
+        r1 = expr[:k]
+        r2 = expr[k + 1:]
+        if len(r2) == 0:  # KEY=
+            return r1, "", ""
+        elif r2.startswith(quote):  # KEY="...
+            if (q := r2.find(quote, 1)) < 0:
+                raise ValueError(f'missing "{quote}" @ {r2}')
+            r3 = r2[q + 1:]
+            r2 = r2[1:q]
+            return r1, r2, r3
+        else:
+            r2 = expr[k + 1:e]
+            r3 = expr[e + 1:]
+            return r1, r2, r3
+    else:  # e < k # KEY,...
+        r1 = expr[:e]
+        r3 = expr[e + 1:]
+        return r1, "", r3

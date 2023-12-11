@@ -1,25 +1,11 @@
 import abc
 import argparse
 import collections
-
 import sys
-from typing import Any, TypeVar, Literal, overload, get_origin, get_args, get_type_hints
+from collections.abc import Iterable, Sequence, Callable
+from typing import Any, TypeVar, Literal, overload, get_origin, get_args, get_type_hints, Type
 
-if sys.version_info < (3, 11):
-    from typing_extensions import Self
-else:
-    from typing import Self
-
-from typing import Optional, Union
-
-if sys.version_info < (3, 9):
-    from typing import List, Tuple, Dict, Type, Iterable, Sequence, Callable
-else:
-    from collections.abc import Iterable, Sequence, Callable
-
-    Tuple = tuple
-    Dict = dict
-    List = list
+from typing_extensions import Self
 
 from .validator import bool_type, ann_type
 
@@ -58,6 +44,18 @@ Actions = Literal[
 ]
 
 
+class ArgumentParser(argparse.ArgumentParser):
+    exit_status = 0
+    exit_message = None
+
+    def exit(self, status: int = 0, message: str = None):
+        self.exit_status = status
+        self.exit_message = message
+
+    def error(self, message: str):
+        self.exit_status = 2
+        self.exit_message = message
+
 class AbstractOptions(metaclass=abc.ABCMeta):
     """Abstract Option class.
 
@@ -69,43 +67,61 @@ class AbstractOptions(metaclass=abc.ABCMeta):
         with_defaults(obj)
         return obj
 
-    def __init__(self, ref: Optional[T] = None, **kwargs):
+    def __init__(self, ref: T | None = None, **kwargs):
         if ref is not None:
             copy_args(self, ref, **kwargs)
 
-    def main(self, args: List[str] = None, *,
+    def main(self, args: list[str] = None, *,
              parse_only=False,
-             system_exit=True) -> int:
+             system_exit: bool | type[BaseException] = True) -> int:
+        """
+
+        :param args:
+        :param parse_only: only parse input. don't raise any error. return 0 when success.
+        :param system_exit: raise SystemExit when return code is non-zero (include parsing error).
+        :return:
+        """
         ap = self.new_parser(reset=True)
         res = ap.parse_args(args)
         set_options(self, res)
 
         if parse_only:
-            return 0
+            return ap.exit_status
+
+        if ap.exit_status != 0 and system_exit:
+            if system_exit is True:
+                ap.print_usage(sys.stderr)
+                print(ap.exit_message, file=sys.stderr)
+                sys.exit(ap.exit_status)
+            else:
+                raise system_exit(ap.exit_status)
 
         if (ret := self.run()) is None:
             ret = 0
 
         if system_exit:
             # force exit for sometimes __main__ doesn't wrap exit code with sys.exit
-            sys.exit(ret)
+            if system_exit is True:
+                sys.exit(ret)
+            else:
+                raise system_exit(ap.exit_status)
 
         return ret
 
     @abc.abstractmethod
-    def run(self) -> Optional[int]:
+    def run(self) -> int | None:
         pass
 
     @classmethod
-    def new_parser(cls, **kwargs) -> argparse.ArgumentParser:
+    def new_parser(cls, **kwargs) -> ArgumentParser:
         return new_parser(cls, **kwargs)
 
     @classmethod
-    def parser_usage(cls) -> Union[str, List[str], None]:
+    def parser_usage(cls) -> str | list[str] | None:
         return None
 
     @classmethod
-    def parser_epilog(cls) -> Optional[str]:
+    def parser_epilog(cls) -> str | None:
         return None
 
     @classmethod
@@ -163,25 +179,44 @@ class Arg(object):
         self.hidden = hidden
         self.kwargs = kwargs
 
-        if (action := kwargs.get('action', None)) == 'store_true':
-            self.kwargs.setdefault('default', False)
-        elif action == 'store_false':
-            self.kwargs.setdefault('default', True)
-
     @property
     def default(self) -> Any:
-        return self.kwargs.get('default', missing)
+        try:
+            return self.kwargs['default']
+        except KeyError:
+            pass
+
+        if (action := self.kwargs.get('action', None)) == 'store_true':
+            return False
+        elif action == 'store_false':
+            return True
+        elif self.attr_type == bool:
+            return False
+
+        return missing
 
     @property
     def const(self) -> Any:
-        return self.kwargs.get('const', missing)
+        try:
+            return self.kwargs['const']
+        except KeyError as e:
+            pass
+
+        if (action := self.kwargs.get('action', None)) == 'store_true':
+            return True
+        elif action == 'store_false':
+            return False
+        elif self.attr_type == bool:
+            return True
+
+        return missing
 
     @property
-    def metavar(self) -> Optional[str]:
+    def metavar(self) -> str | None:
         return self.kwargs.get('metavar', None)
 
     @property
-    def choices(self) -> Optional[Tuple[str, ...]]:
+    def choices(self) -> tuple[str, ...] | None:
         return self.kwargs.get('choices', None)
 
     @property
@@ -189,7 +224,29 @@ class Arg(object):
         return self.kwargs.get('required', False)
 
     @property
-    def help(self) -> Optional[str]:
+    def type(self) -> type | Callable[[str], T]:
+        try:
+            return self.kwargs['type']
+        except KeyError:
+            pass
+
+        attr_type = self.attr_type
+        if attr_type == bool:
+            return bool_type
+        elif attr_type in (str, int, float):
+            return attr_type
+        else:
+            return ann_type(self.attr, attr_type)
+
+    def cast(self, value: str) -> T:
+        ret = self.type(value)
+        if self.validator is not None:
+            if not self.validator(ret):
+                raise ValueError(value)
+        return ret
+
+    @property
+    def help(self) -> str | None:
         return self.kwargs.get('help', None)
 
     def __set_name__(self, owner: type, name: str):
@@ -216,23 +273,20 @@ class Arg(object):
         except KeyError:
             pass
 
-    def add_argument(self, ap: argparse._ActionsContainer, opt):
-        kwargs = self.complete_options(opt)
-
-        if self.hidden:
-            kwargs['help'] = argparse.SUPPRESS
+    def add_argument(self, ap: argparse._ActionsContainer, owner):
+        kwargs = self.complete_options(owner)
 
         try:
             ap.add_argument(*self.options, **kwargs, dest=self.attr)
         except TypeError as e:
-            if isinstance(opt, type):
-                name = opt.__name__
+            if isinstance(owner, type):
+                name = owner.__name__
             else:
-                name = type(opt).__name__
+                name = type(owner).__name__
 
             raise RuntimeError(f'{name}.{self.attr} : ' + repr(e)) from e
 
-    def complete_options(self, opt) -> Dict[str, Any]:
+    def complete_options(self, owner) -> dict[str, Any]:
         attr_type = self.attr_type
         kwargs = dict(self.kwargs)
 
@@ -272,6 +326,9 @@ class Arg(object):
         if self.validator is not None:
             kwargs['type'] = validator(kwargs['type'], self.validator)
 
+        if self.hidden:
+            kwargs['help'] = argparse.SUPPRESS
+
         return kwargs
 
     def set_default(self, value, omit_value=missing) -> Self:
@@ -307,13 +364,13 @@ class Arg(object):
 
     @overload
     def with_options(self,
-                     option: Union[str, Dict[str, str]] = None,
+                     option: str | dict[str, str] = None,
                      *options: str,
                      action: Actions = None,
-                     nargs: Union[int, Nargs] = None,
+                     nargs: int | Nargs = None,
                      const: T = None,
                      default: T = None,
-                     type: Union[None, Type, Callable[[str], T]] = None,
+                     type: Type | Callable[[str], T] | None = None,
                      validator: Callable[[T], bool] = None,
                      choices: Sequence[str] = None,
                      required: bool = None,
@@ -357,36 +414,36 @@ class Arg(object):
         cls = type(self)
 
         if len(self.options) > 0:
-            # match options:
-            #     case ():
-            #         return cls(*self.options, **kw)
-            #     case (a, *o) if a is ...:
-            #         return cls(*self.options, *o, **kw)
-            #     case (dict(mapping), ):
-            #         return cls(*self._map_options(mapping, False), **kw)
-            #     case (dict(mapping), a) if a is ...:
-            #         return cls(*self._map_options(mapping, True), **kw)
-            #     case (dict(mapping), a, *o) if a is ...:
-            #         return cls(*self._map_options(mapping, True), *o, **kw)
-            #     case (dict(mapping), *o):
-            #         return cls(*self._map_options(mapping, False), *o, **kw)
-            #     case _:
-            #         return cls(*options, **kw)
-            if len(options) == 0:
-                return cls(*self.options, **kw)
-            elif options[0] is ...:
-                return cls(*self.options, *options[1:], **kw)
-            elif isinstance(options[0], dict):
-                if len(options) == 1:
-                    return cls(*self._map_options(options[0], False), **kw)
-                if len(options) == 2 and options[1] is ...:
-                    return cls(*self._map_options(options[0], True), **kw)
-                if options[1] is ...:
-                    return cls(*self._map_options(options[0], True), *options[2:], **kw)
-                else:
-                    return cls(*self._map_options(options[0], False), *options[1:], **kw)
-            else:
-                return cls(*options, **kw)
+            match options:
+                case ():
+                    return cls(*self.options, **kw)
+                case (a, *o) if a is ...:
+                    return cls(*self.options, *o, **kw)
+                case (dict(mapping), ):
+                    return cls(*self._map_options(mapping, False), **kw)
+                case (dict(mapping), a) if a is ...:
+                    return cls(*self._map_options(mapping, True), **kw)
+                case (dict(mapping), a, *o) if a is ...:
+                    return cls(*self._map_options(mapping, True), *o, **kw)
+                case (dict(mapping), *o):
+                    return cls(*self._map_options(mapping, False), *o, **kw)
+                case _:
+                    return cls(*options, **kw)
+            # if len(options) == 0:
+            #     return cls(*self.options, **kw)
+            # elif options[0] is ...:
+            #     return cls(*self.options, *options[1:], **kw)
+            # elif isinstance(options[0], dict):
+            #     if len(options) == 1:
+            #         return cls(*self._map_options(options[0], False), **kw)
+            #     if len(options) == 2 and options[1] is ...:
+            #         return cls(*self._map_options(options[0], True), **kw)
+            #     if options[1] is ...:
+            #         return cls(*self._map_options(options[0], True), *options[2:], **kw)
+            #     else:
+            #         return cls(*self._map_options(options[0], False), *options[1:], **kw)
+            # else:
+            #     return cls(*options, **kw)
 
         else:
             if len(options) > 0:
@@ -394,7 +451,7 @@ class Arg(object):
 
             return cls(**kw)
 
-    def _map_options(self, mapping: Dict[str, str], keep: bool) -> List[str]:
+    def _map_options(self, mapping: dict[str, str], keep: bool) -> list[str]:
         new_opt = []
         for old_opt in self.options:
             try:
@@ -422,7 +479,7 @@ def validator(type_caster: Callable[[str], T], validator: Callable[[T], bool]) -
     return _type
 
 
-def foreach_arguments(opt: Union[T, Type[T]]) -> Iterable[Arg]:
+def foreach_arguments(opt: T | type[T]) -> Iterable[Arg]:
     if isinstance(opt, type):
         clazz = opt
     else:
@@ -437,9 +494,9 @@ def foreach_arguments(opt: Union[T, Type[T]]) -> Iterable[Arg]:
                     yield arg
 
 
-def new_parser(opt: Union[T, Type[T]], reset=False,
-               group_order_list: List[str] = None,
-               **kwargs) -> argparse.ArgumentParser:
+def new_parser(opt: T | type[T], reset=False,
+               group_order_list: list[str] = None,
+               **kwargs) -> ArgumentParser:
     """
 
     :param opt:
@@ -465,10 +522,10 @@ def new_parser(opt: Union[T, Type[T]], reset=False,
                     usage = '\n'.join(['\t' + it for it in usage])
                 kwargs['usage'] = usage
 
-    ap = argparse.ArgumentParser(**kwargs)
+    ap = ArgumentParser(**kwargs)
 
-    gp: Dict[str, List[Arg]] = collections.defaultdict(list)
-    eg: Dict[Tuple[Optional[str], str], argparse._ActionsContainer] = {}
+    gp: dict[str, list[Arg]] = collections.defaultdict(list)
+    eg: dict[tuple[str | None, str], argparse._ActionsContainer] = {}
 
     #
     for arg in foreach_arguments(opt):
@@ -512,11 +569,11 @@ def new_parser(opt: Union[T, Type[T]], reset=False,
     return ap
 
 
-def new_command_parser(parsers: Dict[str, Union[AbstractOptions, Type[AbstractOptions]]],
+def new_command_parser(parsers: dict[str, AbstractOptions | type[AbstractOptions]],
                        usage: str = None,
                        description: str = None,
-                       reset=False) -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(
+                       reset=False) -> ArgumentParser:
+    ap = ArgumentParser(
         usage=usage,
         description=description,
         formatter_class=argparse.RawDescriptionHelpFormatter
@@ -541,18 +598,18 @@ def set_options(opt: T, res: argparse.Namespace):
             arg.__set__(opt, value)
 
 
-def parse_args(opt: T, args: List[str] = None) -> T:
+def parse_args(opt: T, args: list[str] = None) -> T:
     ap = new_parser(opt, reset=True)
     res = ap.parse_args(args)
     set_options(opt, res)
     return opt
 
 
-def parse_command_args(parsers: Dict[str, Union[AbstractOptions, Type[AbstractOptions]]],
-                       args: List[str] = None,
+def parse_command_args(parsers: dict[str, AbstractOptions | type[AbstractOptions]],
+                       args: list[str] = None,
                        usage: str = None,
                        description: str = None,
-                       run_main=True) -> Optional[AbstractOptions]:
+                       run_main=True) -> AbstractOptions | None:
     ap = new_command_parser(parsers, usage, description, reset=True)
     res = ap.parse_args(args)
 
@@ -578,14 +635,12 @@ def print_help(opt: T):
 
 def with_defaults(opt: T) -> T:
     for arg in foreach_arguments(opt):
-        kwargs = arg.complete_options(opt)
-        try:
-            value = kwargs['default']
-        except KeyError:
+        if (value := arg.default) is missing:
             arg.__delete__(opt)
         else:
             # print('set_default', arg.attr, value)
             arg.__set__(opt, value)
+
     return opt
 
 
@@ -605,16 +660,15 @@ def copy_args(opt: T, ref: Any, **kwargs) -> T:
         except AttributeError:
             pass
         else:
-            if isinstance(value, str) and arg.attr_type != str:
-                # TODO
-                value = arg.complete_options(opt)['type'](value)
+            if isinstance(value, str):
+                value = arg.cast(value)
             # print('set', arg.attr, value)
             arg.__set__(opt, value)
     return opt
 
 
-def set_ext_options(opt: T, args: Dict[str, Optional[Any]],
-                    protected: Union[List[str], Dict[str, Optional[Any]]] = None) -> T:
+def set_ext_options(opt: T, args: dict[str, Any | None],
+                    protected: list[str] | dict[str, Any | None] = None) -> T:
     """
 
     :param opt:
@@ -636,15 +690,15 @@ def set_ext_options(opt: T, args: Dict[str, Optional[Any]],
             if value is None:
                 arg.__delete__(opt)
             else:
-                if isinstance(value, str) and (type_caster := arg.complete_options(opt)['type']) is not None:
-                    value = type_caster(value)
+                if isinstance(value, str):
+                    value = arg.cast(value)
 
                 # print(arg.attr, '=', value)
                 arg.__set__(opt, value)
     return opt
 
 
-def as_dict(opt: T) -> Dict[str, Any]:
+def as_dict(opt: T) -> dict[str, Any]:
     ret = {}
     for arg in foreach_arguments(opt):
         try:

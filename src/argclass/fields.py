@@ -1,13 +1,5 @@
-import sys
+from collections.abc import Callable, Sequence
 from typing import Any, TypeVar, overload
-from typing import Union
-
-if sys.version_info < (3, 9):
-    from typing import Dict, Callable, Sequence
-else:
-    from collections.abc import Callable, Sequence
-
-    Dict = dict
 
 from .actions import AliasArg, MappingArg
 from .core import Arg, Actions, Nargs, missing
@@ -20,10 +12,10 @@ T = TypeVar('T')
 @overload
 def arg(*options: str,
         action: Actions = missing,
-        nargs: Union[int, Nargs] = missing,
+        nargs: int | Nargs = missing,
         const=missing,
         default=missing,
-        type: Union[type, Callable[[str], T]] = missing,
+        type: type | Callable[[str], T] = missing,
         validator: Callable[[T], bool] = missing,
         choices: Sequence[str] = missing,
         required: bool = missing,
@@ -47,7 +39,7 @@ def posarg(options: str, *,
            action: Actions = missing,
            const=missing,
            default=missing,
-           type: Union[type, Callable[[str], T]] = missing,
+           type: type | Callable[[str], T] = missing,
            validator: Callable[[T], bool] = missing,
            choices: Sequence[str] = missing,
            help: str = missing,
@@ -66,7 +58,7 @@ def vararg(options: str, *,
            action: Actions = missing,
            const=missing,
            default=missing,
-           type: Union[type, Callable[[str], T]] = missing,
+           type: type | Callable[[str], T] = missing,
            validator: Callable[[T], bool] = missing,
            choices: Sequence[str] = missing,
            help: str = missing,
@@ -81,10 +73,10 @@ def vararg(option: str, *, nargs='*', action='extend', **kwargs):
 
 @overload
 def arg_mapping(*options: str,
-                nargs: Union[int, Nargs] = missing,
+                nargs: int | Nargs = missing,
                 const=missing,
                 default=missing,
-                type: Union[type, Callable[[str], T]] = missing,
+                type: type | Callable[[str], T] = missing,
                 validator: Callable[[T], bool] = missing,
                 choices: Sequence[str] = missing,
                 required: bool = missing,
@@ -104,11 +96,11 @@ def arg_mapping(*options: str, **kwargs):
 
 @overload
 def arg_alias(*options: str,
-              aliases: Dict[str, Any],
-              nargs: Union[int, Nargs] = missing,
+              aliases: dict[str, Any],
+              nargs: int | Nargs = missing,
               const=missing,
               default=missing,
-              type: Union[type, Callable[[str], T]] = missing,
+              type: type | Callable[[str], T] = missing,
               validator: Callable[[T], bool] = missing,
               choices: Sequence[str] = missing,
               required: bool = missing,
@@ -120,7 +112,7 @@ def arg_alias(*options: str,
     pass
 
 
-def arg_alias(*options: str, aliases: Dict[str, Any], **kwargs):
+def arg_alias(*options: str, aliases: dict[str, Any], **kwargs):
     if not all([it.startswith('-') for it in options]):
         raise RuntimeError(f'options should startswith "-". {options}')
     return AliasArg(*options, aliases=aliases, **kwargs)
