@@ -56,6 +56,7 @@ class ArgumentParser(argparse.ArgumentParser):
         self.exit_status = 2
         self.exit_message = message
 
+
 class AbstractOptions(metaclass=abc.ABCMeta):
     """Abstract Option class.
 

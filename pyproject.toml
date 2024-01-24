@@ -6,6 +6,7 @@
 name = 'argclass'
 version = '0.0.0'
 authors = [
+    { name = "Ta-Shun Su", email = "antoniost29@gmail.com" },
 ]
 description = "A data-class-like argparse wrapper"
 readme = "README.md"
@@ -22,8 +23,8 @@ classifiers = [
 dynamic = ["dependencies"]
 
 [project.urls]
-#Homepage = "https://github.com/pypa/sampleproject"
-#Issues = "https://github.com/pypa/sampleproject/issues"
+Homepage = "https://github.com/AntonioST/argclass"
+Issues = "https://github.com/AntonioST/argclass/issues"
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
