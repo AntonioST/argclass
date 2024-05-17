@@ -126,17 +126,17 @@ class AbstractOptions(metaclass=abc.ABCMeta):
         return None
 
     @classmethod
-    def print_help(cls) -> str:
+    def print_help(cls, **kwargs) -> str:
         from io import StringIO
         buf = StringIO()
-        cls.new_parser().print_help(file=buf)
+        cls.new_parser(**kwargs).print_help(file=buf)
         return buf.getvalue()
 
     @classmethod
-    def print_usage(cls) -> str:
+    def print_usage(cls, **kwargs) -> str:
         from io import StringIO
         buf = StringIO()
-        cls.new_parser().print_usage(file=buf)
+        cls.new_parser(**kwargs).print_usage(file=buf)
         return buf.getvalue()
 
     def __str__(self):
@@ -187,12 +187,8 @@ class Arg(object):
         except KeyError:
             pass
 
-        if (action := self.kwargs.get('action', None)) == 'store_true':
-            return False
-        elif action == 'store_false':
-            return True
-        elif self.attr_type == bool:
-            return False
+        if self.attr_type == bool:
+            return self.kwargs.get('action', 'store_true') != 'store_true'
 
         return missing
 
@@ -203,12 +199,8 @@ class Arg(object):
         except KeyError as e:
             pass
 
-        if (action := self.kwargs.get('action', None)) == 'store_true':
-            return True
-        elif action == 'store_false':
-            return False
-        elif self.attr_type == bool:
-            return True
+        if self.attr_type == bool:
+            return self.kwargs.get('action', 'store_true') == 'store_true'
 
         return missing
 
@@ -254,6 +246,47 @@ class Arg(object):
         self.attr = name
         self.attr_type = get_type_hints(owner).get(name, Any)
 
+        if len(self.options) == 0:  # positional argument
+            if 'default' not in self.kwargs:
+                self.kwargs.setdefault('nargs', '?')
+
+        if 'type' not in self.kwargs:
+            if self.attr_type == bool and 'default' not in self.kwargs:
+                if 'nargs' in self.kwargs:
+                    self.kwargs['type'] = bool_type
+                    self.kwargs['action'] = 'store'
+                else:
+                    self.kwargs.setdefault('action', 'store_true')
+
+            if get_origin(self.attr_type) is list:
+                self.kwargs.setdefault('action', 'append')
+            else:
+                self.kwargs.setdefault('action', 'store')
+
+            if self.kwargs['action'] in ('store', 'store_const'):  # value type
+                self.kwargs['type'] = ann_type(self.attr, self.attr_type)
+                if get_origin(self.attr_type) == Literal and 'metavar' not in self.kwargs:
+                    self.kwargs['metavar'] = '|'.join(get_args(self.attr_type))
+            elif self.kwargs['action'] in ('append', 'append_const', 'extend'):  # collection type
+                self.kwargs.setdefault('default', get_origin(self.attr_type)())
+
+                a_type_arg = get_args(self.attr_type)  # Coll[T]
+                if len(a_type_arg) == 0:
+                    self.kwargs['type'] = self.attr_type
+                elif len(a_type_arg) == 1:
+                    self.kwargs['type'] = ann_type(self.attr, a_type_arg[0])
+                else:
+                    raise RuntimeError()
+
+        if 'choices' not in self.kwargs and get_origin(self.attr_type) == Literal:
+            self.kwargs['choices'] = get_args(self.attr_type)
+
+        if self.validator is not None:
+            self.kwargs['type'] = validator(self.kwargs['type'], self.validator)
+
+        if self.hidden:
+            self.kwargs['help'] = argparse.SUPPRESS
+
     def __get__(self, instance, owner=None):
         if instance is None:
             return self
@@ -275,10 +308,8 @@ class Arg(object):
             pass
 
     def add_argument(self, ap: argparse._ActionsContainer, owner):
-        kwargs = self.complete_options(owner)
-
         try:
-            ap.add_argument(*self.options, **kwargs, dest=self.attr)
+            ap.add_argument(*self.options, **self.kwargs, dest=self.attr)
         except TypeError as e:
             if isinstance(owner, type):
                 name = owner.__name__
@@ -286,51 +317,6 @@ class Arg(object):
                 name = type(owner).__name__
 
             raise RuntimeError(f'{name}.{self.attr} : ' + repr(e)) from e
-
-    def complete_options(self, owner) -> dict[str, Any]:
-        attr_type = self.attr_type
-        kwargs = dict(self.kwargs)
-
-        if len(self.options) == 0:  # positional argument
-            if 'default' not in kwargs:
-                kwargs.setdefault('nargs', '?')
-
-        if 'type' not in kwargs:
-            if attr_type == bool and 'default' not in kwargs:
-                if 'nargs' in kwargs:
-                    kwargs['type'] = bool_type
-                    kwargs['action'] = 'store'
-                else:
-                    kwargs.setdefault('action', 'store_true')
-                    kwargs.setdefault('default', False)
-
-            if get_origin(attr_type) is list:
-                kwargs.setdefault('action', 'append')
-            else:
-                kwargs.setdefault('action', 'store')
-
-            if kwargs['action'] in ('store', 'store_const'):  # value type
-                kwargs['type'] = ann_type(self.attr, attr_type)
-                if get_origin(attr_type) == Literal and 'metavar' not in kwargs:
-                    kwargs['metavar'] = '|'.join(get_args(attr_type))
-            elif kwargs['action'] in ('append', 'append_const', 'extend'):  # collection type
-                kwargs.setdefault('default', get_origin(attr_type)())
-
-                a_type_arg = get_args(attr_type)  # Coll[T]
-                if len(a_type_arg) == 0:
-                    kwargs['type'] = attr_type
-                elif len(a_type_arg) == 1:
-                    kwargs['type'] = ann_type(self.attr, a_type_arg[0])
-                else:
-                    raise RuntimeError()
-
-        if self.validator is not None:
-            kwargs['type'] = validator(kwargs['type'], self.validator)
-
-        if self.hidden:
-            kwargs['help'] = argparse.SUPPRESS
-
-        return kwargs
 
     def set_default(self, value, omit_value=missing) -> Self:
         """Set the default value. This method help to build optional value arg,
@@ -472,10 +458,10 @@ def validator(type_caster: Callable[[str], T], validator: Callable[[T], bool]) -
     """
 
     def _type(value: str):
-        value = type_caster(value)
-        if not validator(value):
-            raise TypeError
-        return value
+        ret = type_caster(value)
+        if not validator(ret):
+            raise ValueError(value)
+        return ret
 
     return _type
 

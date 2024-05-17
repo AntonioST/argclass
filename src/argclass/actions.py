@@ -14,10 +14,8 @@ class AliasArg(Arg):
         self.aliases = aliases
 
     def add_argument(self, ap: argparse._ActionsContainer, owner):
-        kwargs = self.complete_options(owner)
-
         try:
-            ap.add_argument(*self.options, **kwargs, dest=self.attr)
+            ap.add_argument(*self.options, **self.kwargs, dest=self.attr)
         except TypeError as e:
             if isinstance(owner, type):
                 name = owner.__name__
@@ -28,7 +26,7 @@ class AliasArg(Arg):
 
         owner = self.options[0]
         for name, values in self.aliases.items():
-            kw = dict(kwargs)
+            kw = dict(self.kwargs)
             kw.pop('metavar', None)
             kw.pop('type', None)
             kw['action'] = 'store_const'

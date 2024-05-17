@@ -1,7 +1,7 @@
 import unittest
-from typing import Any
+from typing import Any, Literal
 
-from argclass import arg, list_type, dict_type, tuple_type
+from argclass import arg, list_type, dict_type, tuple_type, as_arg, posarg, vararg
 from argclass.core import foreach_arguments, with_defaults, AbstractOptions, missing
 
 
@@ -166,6 +166,16 @@ class TestArgType(unittest.TestCase):
         self.assertFalse(c.b)
         self.assertTrue(c.c)
 
+    def test_bool_constant(self):
+        class C:
+            a: bool = arg('-a')
+            b: bool = arg('-b', action='store_true')
+            c: bool = arg('-c', action='store_false')
+
+        self.assertTrue(as_arg(C.a).const)
+        self.assertTrue(as_arg(C.b).const)
+        self.assertFalse(as_arg(C.c).const)
+
     def test_int_defaults(self):
         class C:
             a: int = arg('-a')
@@ -175,6 +185,14 @@ class TestArgType(unittest.TestCase):
         with self.assertRaises(AttributeError):
             c.a
         self.assertEqual(0, c.b)
+
+    def test_int_constant(self):
+        class C:
+            a: int = arg('-a')
+            b: int = arg('-b', const=10)
+
+        self.assertIs(missing, as_arg(C.a).const)
+        self.assertEqual(10, as_arg(C.b).const)
 
     def test_bool_parser_defaults(self):
         class C(AbstractOptions):
@@ -230,6 +248,61 @@ class TestArgType(unittest.TestCase):
         self.assertEqual(0, c.main(['-a', '1'], parse_only=True))
         self.assertEqual(1, c.a)
 
+    def test_parse_literal(self):
+        class C(AbstractOptions):
+            a: Literal['A', 'B'] = arg('-a')
+
+            def run(self):
+                pass
+
+        c = C()
+        self.assertEqual(('A', 'B'), as_arg(C.a).choices)
+        self.assertEqual(0, c.main(['-a=A'], parse_only=True))
+        self.assertEqual('A', c.a)
+
+        self.assertEqual(2, c.main(['-a=C'], parse_only=True))
+
+    def test_set_default(self):
+        class C(AbstractOptions):
+            a: int = arg('-a').set_default(None, 0)
+            b: int = arg('-b', default=0)
+
+            def run(self):
+                pass
+
+        c = C()
+        self.assertEqual(0, c.main([], parse_only=True))
+        self.assertIsNone(c.a)
+
+        c = C()
+        self.assertEqual(0, c.main(['-a'], parse_only=True))
+        self.assertEqual(0, c.a)
+
+        c = C()
+        self.assertEqual(0, c.main(['-a=10'], parse_only=True))
+        self.assertEqual(10, c.a)
+
+        c = C()
+        self.assertEqual(0, c.main(['-a', '10'], parse_only=True))
+        self.assertEqual(10, c.a)
+
+    def test_with_options(self):
+        class C(AbstractOptions):
+            a: int = arg('-a', default=0)
+
+            def run(self):
+                pass
+
+        class D(C):
+            a: int = as_arg(C.a).with_options(default=10)
+
+        c = C()
+        self.assertEqual(0, c.main([], parse_only=True))
+        self.assertEqual(0, c.a)
+
+        c = D()
+        self.assertEqual(0, c.main([], parse_only=True))
+        self.assertEqual(10, c.a)
 
 class TestListArgType(unittest.TestCase):
     def test_parse_list(self):
@@ -387,6 +460,45 @@ class TestDictArgType(unittest.TestCase):
 
         self.assertEqual(0, c.main(['-aint=1,float=2.1,str=c,other=d'], parse_only=True))
         self.assertDictEqual({'int': 1, 'float': 2.1, 'str': 'c', 'other': 'invalid'}, c.a)
+
+
+class TestPosArgType(unittest.TestCase):
+    def test_pos_arg(self):
+        class C(AbstractOptions):
+            a: str = posarg('A')
+
+            def run(self):
+                pass
+
+        c = C()
+        self.assertEqual(0, c.main(['10'], parse_only=True))
+        self.assertEqual('10', c.a)
+
+    def test_multiple_pos_arg(self):
+        class C(AbstractOptions):
+            a: str = posarg('A')
+            b: int = posarg('B')
+            c: float = posarg('C')
+
+            def run(self):
+                pass
+
+        c = C()
+        self.assertEqual(0, c.main(['10', '11', '12'], parse_only=True))
+        self.assertEqual('10', c.a)
+        self.assertEqual(11, c.b)
+        self.assertEqual(12, c.c)
+
+    def test_var_pos_arg(self):
+        class C(AbstractOptions):
+            a: list[str] = vararg('A')
+
+            def run(self):
+                pass
+
+        c = C()
+        self.assertEqual(0, c.main(['10', '11', '12'], parse_only=True))
+        self.assertListEqual(['10', '11', '12'], c.a)
 
 
 if __name__ == '__main__':
