@@ -248,6 +248,19 @@ class TestArgType(unittest.TestCase):
         self.assertEqual(0, c.main(['-a', '1'], parse_only=True))
         self.assertEqual(1, c.a)
 
+    def test_multiple_args(self):
+        class C(AbstractOptions):
+            a: int = arg('-a', default=0)
+
+            def run(self):
+                pass
+
+        c = C()
+        self.assertEqual(0, c.main([], parse_only=True))
+        self.assertEqual(0, c.a)
+        self.assertEqual(0, c.main(['-a1', '-a2'], parse_only=True))
+        self.assertEqual(2, c.a)
+
     def test_parse_literal(self):
         class C(AbstractOptions):
             a: Literal['A', 'B'] = arg('-a')
