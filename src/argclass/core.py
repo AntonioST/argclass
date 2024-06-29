@@ -45,8 +45,8 @@ Actions = Literal[
 
 
 class ArgumentParser(argparse.ArgumentParser):
-    exit_status = 0
-    exit_message = None
+    exit_status: int | None = None
+    exit_message: str | None = None
 
     def exit(self, status: int = 0, message: str = None):
         self.exit_status = status
@@ -89,10 +89,11 @@ class AbstractOptions(metaclass=abc.ABCMeta):
         if parse_only:
             return ap.exit_status
 
-        if ap.exit_status != 0 and system_exit:
+        if ap.exit_status is not None and system_exit:
             if system_exit is True:
-                ap.print_usage(sys.stderr)
-                print(ap.exit_message, file=sys.stderr)
+                if ap.exit_status != 0:
+                    ap.print_usage(sys.stderr)
+                    print(ap.exit_message, file=sys.stderr)
                 sys.exit(ap.exit_status)
             else:
                 raise system_exit(ap.exit_status)
@@ -196,7 +197,7 @@ class Arg(object):
     def const(self) -> Any:
         try:
             return self.kwargs['const']
-        except KeyError as e:
+        except KeyError:
             pass
 
         if self.attr_type == bool:
